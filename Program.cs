@@ -1,4 +1,4 @@
-﻿using System.Text.RegularExpressions;
+﻿﻿﻿using System.Text.RegularExpressions;
 
 namespace simple_crawler;
 
@@ -12,6 +12,9 @@ public partial class Crawler
     protected String? basedFolder = null;
     protected int maxLinksPerPage = 3;
 
+    private readonly HashSet<string> visited = new(StringComparer.InvariantCultureIgnoreCase);
+    private static readonly HttpClient client = new();
+
     /// <summary>
     /// Method <c>SetBasedFolder</c> sets based folder to store retrieved contents.
     /// </summary>
@@ -23,6 +26,7 @@ public partial class Crawler
             throw new ArgumentNullException(nameof(folder));
         }
         basedFolder = folder;
+        Directory.CreateDirectory(basedFolder);
     }
 
     /// <summary>
@@ -53,20 +57,34 @@ public partial class Crawler
             throw new ArgumentNullException(nameof(url));
         }
 
-        // For simplicity, we will use <c>HttpClient</c> here, but if you want you can try <c>TcpClient</c>
-        HttpClient client = new();
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? currentUri))
+        {
+            return;
+        }
 
+        if (!visited.Add(currentUri.AbsoluteUri))
+        {
+            return;
+        }
+
+        // For simplicity, we will use <c>HttpClient</c> here, but if you want you can try <c>TcpClient</c>
         try
         {
             // Get content from url
-            HttpResponseMessage response = await client.GetAsync(url);
+            HttpResponseMessage response = await client.GetAsync(currentUri);
             if (response.IsSuccessStatusCode)
             {
                 String responseBody = await response.Content.ReadAsStringAsync();
                 // Reformat URL to a valid filename
-                String fileName = url.Replace(":", "_").Replace("/", "_").Replace(".", "_") + ".html";
+                String fileName = currentUri.AbsoluteUri.Replace(":", "_").Replace("/", "_").Replace(".", "_") + ".html";
                 // Store content in file
-                File.WriteAllText(basedFolder + "/" + fileName, responseBody);
+                File.WriteAllText(Path.Combine(basedFolder, fileName), responseBody);
+
+                if (level <= 0)
+                {
+                    return;
+                }
+
                 // Get list of links from content
                 ISet<String> links = GetLinksFromPage(responseBody);
                 int count = 0;
@@ -74,10 +92,13 @@ public partial class Crawler
                 foreach (String link in links)
                 {
                     // We only interested in http/https link
-                    if(link.StartsWith("http", StringComparison.InvariantCultureIgnoreCase))
+                    if (Uri.TryCreate(currentUri, link, out Uri? nextUri) &&
+                        (nextUri.Scheme.Equals("http", StringComparison.InvariantCultureIgnoreCase) ||
+                         nextUri.Scheme.Equals("https", StringComparison.InvariantCultureIgnoreCase)))
                     {
                         // Your code here
                         // Note: It should be recursive operation here
+                        await GetPage(nextUri.AbsoluteUri, level - 1);
 
                         // limit number of links in the page, otherwise it will load lots of data
                         if (++count >= maxLinksPerPage) break;
@@ -126,12 +147,12 @@ public partial class Crawler
 }
 class Program
 {
-    static void Main(string[] args)
+    static async Task Main(string[] args)
     {
         Crawler cw = new();
         // Can you improve this code?
-        cw.SetBasedFolder(".");
+cw.SetBasedFolder("downloads");
         cw.SetMaxLinksPerPage(5);
-        cw.GetPage("https://dandadan.net/", 2).Wait();
+        await cw.GetPage("https://dandadan.net/", 2);
     }
 }
